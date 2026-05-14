@@ -1,7 +1,9 @@
 from agent import Agent
+from dotenv import load_dotenv
 
 
 def main() -> None:
+    load_dotenv()
     agent = Agent()
     print("Payment Collection Agent")
     print("Type `exit` to quit.")

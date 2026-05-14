@@ -1,36 +1,13 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
 import json
 import os
 import re
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 import requests
 
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
-
-
-@dataclass(frozen=True)
-class TurnIntentHint:
-    intent: str
-    confidence: str
-    suggested_prompt: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class TurnGuidanceHint:
-    active_agent: str
-    message: Optional[str]
-    confidence: str
-
-
-@dataclass(frozen=True)
-class MultiAgentTurnAnalysis:
-    intent_hint: TurnIntentHint
-    guidance_hint: Optional[TurnGuidanceHint] = None
+DEFAULT_OPENAI_MODEL = "gpt-4o"  # Capable model for extraction and conversational response
 
 
 class LlmAssistantError(Exception):
@@ -44,7 +21,7 @@ class OpenAILLMMultiAgent:
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         base_url: Optional[str] = None,
-        timeout_seconds: int = 15,
+        timeout_seconds: int = 30,
         session: Optional[requests.Session] = None,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -55,190 +32,106 @@ class OpenAILLMMultiAgent:
 
     @classmethod
     def from_env(cls) -> Optional["OpenAILLMMultiAgent"]:
-        enabled = os.getenv("ENABLE_LLM_ASSIST", "").strip().lower()
         api_key = os.getenv("OPENAI_API_KEY")
-        if enabled not in {"1", "true", "yes"}:
-            return None
         if not api_key:
             return None
         return cls(api_key=api_key)
 
-    def analyze_turn(
+    def extract_information(
         self,
-        *,
-        text: str,
-        stage: str,
-        account_loaded: bool,
-        verified: bool,
-    ) -> Optional[MultiAgentTurnAnalysis]:
-        redacted_text = self._redact(text)
-        if not redacted_text:
-            return None
-
-        triage_payload = self._request_structured_json(
-            system_prompt=(
-                "You are the triage agent in a payment-collection multi-agent system. "
-                "Classify the user's redacted message and choose which specialist should help next. "
-                "Never infer hidden sensitive values. Return strict JSON only."
-            ),
-            user_prompt=(
-                f"stage={stage}\n"
-                f"account_loaded={str(account_loaded).lower()}\n"
-                f"verified={str(verified).lower()}\n"
-                f"redacted_user_text={redacted_text}"
-            ),
-            format_name="triage_agent_output",
-            schema={
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "intent": {
-                        "type": "string",
-                        "enum": [
-                            "unknown",
-                            "greeting",
-                            "account_lookup_attempt",
-                            "verification_attempt",
-                            "payment_attempt",
-                            "card_details_attempt",
-                            "help_request",
-                            "cancel",
-                        ],
-                    },
-                    "route": {
-                        "type": "string",
-                        "enum": [
-                            "none",
-                            "account_support",
-                            "verification_support",
-                            "payment_support",
-                            "recovery_support",
-                        ],
-                    },
-                    "confidence": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high"],
-                    },
-                    "suggested_prompt": {
-                        "type": ["string", "null"],
-                    },
-                },
-                "required": ["intent", "route", "confidence", "suggested_prompt"],
-            },
-        )
-        if not triage_payload:
-            return None
-
-        intent_hint = TurnIntentHint(
-            intent=triage_payload.get("intent", "unknown"),
-            confidence=triage_payload.get("confidence", "low"),
-            suggested_prompt=triage_payload.get("suggested_prompt"),
+        user_input: str,
+        history: List[Dict[str, str]],
+        memory: Dict[str, Any],
+        current_state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Extracts structured information and updates memory from messy user input.
+        """
+        system_prompt = (
+            "You are an expert data extraction agent for a debt collection and payment system. "
+            "Your goal is to maintain a 'memory' of user-provided details and extract new information. "
+            "MEMORY FIELDS:\n"
+            "- account_id, full_name, dob, aadhaar_last4, pincode, payment_amount, "
+            "cardholder_name, card_number, cvv, expiry_month, expiry_year.\n"
+            "(Note: phone number and email are NOT used and should not be extracted)\n"
+            "\n"
+            "RULES for MEMORY UPDATES:\n"
+            "1. If the user provides NEW info, add it to memory.\n"
+            "2. If the user wants to CHANGE or CORRECT info (e.g., 'no, my name is...', 'I want to change the name'), update that field in memory.\n"
+            "3. If the user wants to DELETE or CLEAR info, set that field to null in memory.\n"
+            "4. Detect the 'intent' (e.g., 'cancel').\n"
+            "\n"
+            "Return a JSON object with two keys:\n"
+            "- 'memory': The COMPLETE updated memory dictionary (all fields included, null if missing).\n"
+            "- 'intent': 'cancel' or null.\n"
+            "\n"
+            "Be extremely robust to messy, conversational formatting. Use history for context."
         )
 
-        route = triage_payload.get("route", "none")
-        guidance_hint = self._specialist_guidance(
-            route=route,
-            redacted_text=redacted_text,
-            stage=stage,
-            account_loaded=account_loaded,
-            verified=verified,
-        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            *history[-10:],
+            {"role": "user", "content": f"Current Memory: {json.dumps(memory)}\nInternal State: {json.dumps(current_state)}\nLatest User Input: {user_input}"}
+        ]
 
-        return MultiAgentTurnAnalysis(intent_hint=intent_hint, guidance_hint=guidance_hint)
+        response = self._chat_completion(messages, response_format={"type": "json_object"})
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            return {}
 
-    def _specialist_guidance(
+    def generate_response(
         self,
-        *,
-        route: str,
-        redacted_text: str,
-        stage: str,
-        account_loaded: bool,
-        verified: bool,
-    ) -> Optional[TurnGuidanceHint]:
-        prompts = {
-            "account_support": (
-                "You are the account lookup support agent. "
-                "Write one short, actionable sentence asking for the account ID format only."
-            ),
-            "verification_support": (
-                "You are the verification coach agent. "
-                "Write one short, policy-safe sentence about what verification detail is still needed. "
-                "Never reveal any stored identity data."
-            ),
-            "payment_support": (
-                "You are the payment collection agent. "
-                "Write one short, actionable sentence about the next payment detail needed. "
-                "Do not mention any sensitive values that were redacted."
-            ),
-            "recovery_support": (
-                "You are the recovery agent. "
-                "Write one short, actionable sentence to recover from a failed or unclear turn."
-            ),
-        }
-        system_prompt = prompts.get(route)
-        if not system_prompt:
-            return None
-
-        payload = self._request_structured_json(
-            system_prompt=system_prompt,
-            user_prompt=(
-                f"stage={stage}\n"
-                f"account_loaded={str(account_loaded).lower()}\n"
-                f"verified={str(verified).lower()}\n"
-                f"redacted_user_text={redacted_text}"
-            ),
-            format_name=f"{route}_output",
-            schema={
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "guidance_message": {
-                        "type": ["string", "null"],
-                    },
-                    "confidence": {
-                        "type": "string",
-                        "enum": ["low", "medium", "high"],
-                    },
-                },
-                "required": ["guidance_message", "confidence"],
-            },
-        )
-        if not payload:
-            return None
-
-        return TurnGuidanceHint(
-            active_agent=route,
-            message=payload.get("guidance_message"),
-            confidence=payload.get("confidence", "low"),
+        history: List[Dict[str, str]],
+        current_state: Dict[str, Any],
+        last_outcome: Optional[str] = None
+    ) -> str:
+        """
+        Generates a natural, conversational response based on the full context and state.
+        """
+        system_prompt = (
+            "You are a professional and helpful debt collection agent named 'Prodigal Assistant'. "
+            "Your goal is to guide the user through: 1. Account Lookup, 2. Identity Verification, 3. Balance Review, 4. Payment. "
+            "RULES:\n"
+            "- Be conversational and empathetic, but clear.\n"
+            "- If verification fails, explain clearly how many attempts are left (max 3).\n"
+            "- If a payment is successful, provide the transaction ID and a recap.\n"
+            "- NEVER reveal sensitive data like DOB, Aadhaar, or Pincode from the account records back to the user.\n"
+            "- VALID SECONDARY VERIFICATION FACTORS: Date of Birth, Last 4 digits of Aadhaar, or Pincode. Do NOT ask for phone numbers or email addresses.\n"
+            "- STRICTURE FOR RETRIES: If 'current_field_retries' is > 0, be more direct and strictly ask for the missing information. If it reaches 3, the session will close.\n"
+            "- Only ask for one or two pieces of information at a time to avoid overwhelming the user.\n"
+            "- Handle messy inputs gracefully and acknowledge what you've received.\n"
+            "- If the user wants to cancel or exit, acknowledge and close the session.\n"
+            "- If the session is closed/locked, explain why and how to start over."
         )
 
-    def _request_structured_json(
+        user_content = f"Current Internal State: {json.dumps(current_state)}\n"
+        if last_outcome:
+            user_content += f"Outcome of last operation: {last_outcome}\n"
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            *history[-10:],
+            {"role": "user", "content": user_content}
+        ]
+
+        return self._chat_completion(messages)
+
+    def _chat_completion(
         self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        format_name: str,
-        schema: dict,
-    ) -> Optional[dict]:
+        messages: List[Dict[str, str]],
+        response_format: Optional[Dict[str, str]] = None
+    ) -> str:
         payload = {
             "model": self.model,
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": format_name,
-                    "strict": True,
-                    "schema": schema,
-                }
-            },
+            "messages": messages,
         }
+        if response_format:
+            payload["response_format"] = response_format
 
         try:
             response = self.session.post(
-                f"{self.base_url}/responses",
+                f"{self.base_url}/chat/completions",
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
@@ -248,32 +141,6 @@ class OpenAILLMMultiAgent:
             )
             response.raise_for_status()
             body = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            raise LlmAssistantError("LLM multi-agent request failed.") from exc
-
-        return self._extract_text_json(body)
-
-    def _extract_text_json(self, body: dict) -> Optional[dict]:
-        for item in body.get("output", []):
-            if item.get("type") != "message":
-                continue
-            for content in item.get("content", []):
-                if content.get("type") == "output_text":
-                    try:
-                        return json.loads(content.get("text", ""))
-                    except (TypeError, json.JSONDecodeError):
-                        return None
-                if content.get("type") == "refusal":
-                    return None
-        return None
-
-    def _redact(self, text: str) -> str:
-        redacted = text
-        redacted = re.sub(r"\bACC\d{4,}\b", "[ACCOUNT_ID]", redacted, flags=re.IGNORECASE)
-        redacted = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", "[DATE]", redacted)
-        redacted = re.sub(r"\b(?:\d[ -]?){13,19}\b", "[CARD_NUMBER]", redacted)
-        redacted = re.sub(r"\b\d{6}\b", "[PINCODE]", redacted)
-        redacted = re.sub(r"\b\d{4}\b", "[FOUR_DIGITS]", redacted)
-        redacted = re.sub(r"\b\d{3}\b", "[THREE_DIGITS]", redacted)
-        redacted = re.sub(r"\b₹?\d+(?:\.\d{1,3})?\b", "[AMOUNT_OR_NUMBER]", redacted)
-        return redacted.strip()
+            return body["choices"][0]["message"]["content"]
+        except (requests.RequestException, KeyError, ValueError) as exc:
+            raise LlmAssistantError(f"LLM request failed: {str(exc)}") from exc

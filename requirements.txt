@@ -1,5 +1,6 @@
 # Runtime dependency for the payment API client and optional OpenAI HTTP calls.
 requests>=2.31.0,<3
+python-dotenv>=1.0.0,<2
 
 # Test dependency.
 pytest>=8.0.0,<9

@@ -97,7 +97,10 @@ class ConversationState:
     payment_amount_had_too_many_decimals: bool = False
     card: CardDetails = field(default_factory=CardDetails)
     payment_failures: int = 0
+    current_field_retries: int = 0 # Retries for the current requested field
     closed: bool = False
+    history: list[dict[str, str]] = field(default_factory=list)
+    memory: dict[str, Any] = field(default_factory=dict)
     last_tool_traces: list[ToolTrace] = field(default_factory=list)
     audit_log: list[AuditEvent] = field(default_factory=list)
 
