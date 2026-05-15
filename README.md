@@ -6,43 +6,43 @@ An agentic, multi-turn AI system for handling debt collection and payment proces
 
 ## 🛠️ Quick Start
 
-1.  **Clone the repository** and navigate to the directory.
+1.  **Clone the repository** and navigate to the root directory.
 2.  **Install dependencies**:
     ```bash
     pip install -r requirements.txt
     ```
-3.  **Configure environment variables**:
-    Create a `.env` file (or use the provided one):
-    ```bash
-    OPENAI_API_KEY="your-api-key"
+3.  **Configure Environment**:
+    Create a `.env` file in the root directory (refer to `.env.example` if available):
+    ```ini
+    OPENAI_API_KEY="your_api_key_here"
     OPENAI_MODEL="gpt-4o"
     PAYMENT_API_BASE_URL="https://se-payment-verification-api.service.external.usea2.aws.prodigaltech.com/openapi"
     ```
-4.  **Run the CLI**:
+4.  **Run the Interactive CLI**:
     ```bash
     python cli.py
     ```
 
 ---
 
-## 🏛️ Architecture & Design
-
-For a detailed breakdown of the system architecture, key decisions, and tradeoffs, please see the **[APPROACH.md](APPROACH.md)** document.
+## 🏛️ Documentation
+- **[APPROACH.md](APPROACH.md)**: Architecture, Design Decisions, and Tradeoffs.
+- **[EVALUATION.md](EVALUATION.md)**: Comprehensive Evaluation Strategy and AI-as-a-Judge framework.
 
 ---
 
-## 🧪 Evaluation Strategy
+## 🧪 Evaluation & Testing
 
-### Automated Scenarios (50 Test Cases)
-Run the comprehensive real-world test suite with:
+### Automated AI-Judged Scenarios
+We use a high-reasoning **LLM-as-a-Judge** to audit 50+ diverse conversational scenarios.
 ```bash
 python tests/test_agent_scenarios.py
 ```
 **Categories covered**:
-- **Identity**: Exact name matching, Leap year logic (`ACC1004`), and regional date formats.
-- **Security**: Strict 3-fail lockout enforcement and data masking.
-- **Edge Cases**: Change of mind (*"Wait, I mean ACC1001"*), one-shot verification, and partial payments.
-- **API Errors**: Handling of `insufficient_balance`, `invalid_card`, and `invalid_cvv`.
+- **Identity Verification**: Strict name matching and secondary factors.
+- **Edge Cases**: Leap year dates (`1988-02-29`), corrections, and out-of-order data.
+- **Policy Enforcement**: 3-fail lockout rule and PII protection.
+- **Payment Handling**: Amount parsing, card validation, and API errors.
 
 ### Success Metrics
 - **Task Success Rate (TSR)**: % of sessions reaching a terminal state correctly.
