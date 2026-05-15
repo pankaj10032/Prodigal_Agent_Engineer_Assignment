@@ -37,3 +37,13 @@ The system follows a **Hybrid Agentic Architecture**. It separates the "Understa
 - **Local LLM Support**: Moving the extraction layer to a local model (like Llama 3) would reduce API costs and improve data privacy.
 - **PII Redaction Layer**: Implementing an automated redaction layer that masks card numbers and Aadhaar details *before* they are logged or sent to the LLM for response generation.
 - **Voice Integration**: The modular extraction layer is already well-suited to handle STT (Speech-to-Text) inputs for phone-based debt collection.
+
+---
+
+## 5. Evaluation Strategy: AI-as-a-Judge
+
+For a system this complex, traditional unit tests are insufficient. We implemented a **"LLM-as-a-Judge"** framework to verify our agent.
+
+### Decision: Semantic Auditing
+- **Why?** Instead of checking for specific strings (which are fragile), we use a high-reasoning model (GPT-4o) to "audit" the transcript. The Judge verifies that the agent followed ground rules: "Was identity verified first?", "Did it leak PII?", "Did it handle the retry limit correctly?".
+- **Scalability**: This allows us to run 50+ diverse conversational scenarios and get a detailed "Reasoning" for every pass or failure.

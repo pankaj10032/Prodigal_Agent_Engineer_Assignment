@@ -33,16 +33,16 @@ For a detailed breakdown of the system architecture, key decisions, and tradeoff
 
 ## 🧪 Evaluation Strategy
 
-### Automated Testing
-Run the comprehensive test suite with:
+### Automated Scenarios (50 Test Cases)
+Run the comprehensive real-world test suite with:
 ```bash
-python -m pytest tests/test_agent_agentic.py
+python tests/test_agent_scenarios.py
 ```
 **Categories covered**:
-- Happy Path (End-to-End).
-- Verification Strictness (Exact match, Leap year `1988-02-29`).
-- Retry & Lockout enforcement (3-fail limit).
-- Payment Validation (Luhn, Expiry, Amount vs. Balance).
+- **Identity**: Exact name matching, Leap year logic (`ACC1004`), and regional date formats.
+- **Security**: Strict 3-fail lockout enforcement and data masking.
+- **Edge Cases**: Change of mind (*"Wait, I mean ACC1001"*), one-shot verification, and partial payments.
+- **API Errors**: Handling of `insufficient_balance`, `invalid_card`, and `invalid_cvv`.
 
 ### Success Metrics
 - **Task Success Rate (TSR)**: % of sessions reaching a terminal state correctly.

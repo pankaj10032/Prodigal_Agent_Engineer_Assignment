@@ -143,12 +143,21 @@ class Agent:
         # Sync memory to specific state fields
         mem = self.state.memory
         
-        # Account ID
-        if mem.get("account_id") and not self.state.account:
-            self.state.account_id = str(mem["account_id"]).strip().upper()
-        elif mem.get("account_id") is None:
+        # Account ID Logic: Update if memory has a DIFFERENT ID than what we have loaded
+        mem_account_id = mem.get("account_id")
+        if mem_account_id:
+            normalized_mem_id = str(mem_account_id).strip().upper()
+            if not self.state.account or self.state.account.account_id != normalized_mem_id:
+                self.state.account_id = normalized_mem_id
+                self.state.account = None # Force a re-lookup
+                self.state.verified = False # Reset verification for new account
+                self.state.verification_failures = 0
+                self.state.stage = "awaiting_account_id"
+        elif mem_account_id is None:
             self.state.account_id = None
             self.state.account = None
+            self.state.verified = False
+            self.state.stage = "awaiting_account_id"
 
         # Verification fields (allow overwriting if not yet verified)
         if not self.state.verified:
@@ -210,7 +219,7 @@ class Agent:
                 self.state.account = account
                 self.state.stage = "awaiting_verification"
                 self.state.add_audit_event("account_lookup_succeeded", f"Loaded account {account.account_id}")
-                return f"Account {account.account_id} found. Need verification."
+                # FALL THROUGH to allow verification in the same turn
             except AccountNotFoundError:
                 self.state.account_id = None # Reset to let user try again
                 return "Account not found. Please provide a valid Account ID."
